@@ -7,34 +7,39 @@ import io
 
 # --- LÓGICA DE PROCESAMIENTO ---
 def procesar_datos(archivo):
+    # Leer el archivo sin cabeceras inicialmente
     df_raw = pd.read_excel(archivo, header=None)
-    current_person = None
-    records = []
     
-    for i, row in df_raw.iterrows():
-        val = str(row[0])
-        if "Nombre:" in val:
-            try:
-                p_name = val.split("Nombre:")[1].split("Apellido:")[0].strip()
-                p_last = val.split("Apellido:")[1].split("ID:")[0].strip()
-                current_person = f"{p_name} {p_last}"
-            except:
-                current_person = val
-        elif val in ["Fecha", "nan"] or "Transacciones" in val or "Periodo" in val:
-            continue
-        elif current_person:
-            records.append({
-                'Nombre': current_person,
-                'Fecha': pd.to_datetime(row[0]).date(),
-                'Hora': str(row[2])[:5]
-            })
+    # Buscar automáticamente en qué fila están los encabezados (donde la primera columna dice 'Nombre')
+    try:
+        header_idx = df_raw[df_raw[0] == 'Nombre'].index[0]
+    except IndexError:
+        raise ValueError("No se encontró la cabecera 'Nombre' en el archivo. Verifica el formato.")
     
-    df = pd.DataFrame(records)
+    # Quedarnos solo con los datos a partir de esa fila
+    df = df_raw.iloc[header_idx + 1:].copy()
+    
+    # Asignar los nombres de las 4 columnas basándonos en tu archivo
+    # (Nombre, Fecha, Semana, Hora de registro de entrada)
+    # Si hay más columnas, las ignoramos tomando solo las primeras 4
+    df = df.iloc[:, :4]
+    df.columns = ['Nombre', 'Fecha', 'Semana', 'Hora']
+    
+    # Limpiar filas que estén vacías
+    df = df.dropna(subset=['Nombre', 'Hora'])
+    
+    # Convertir formatos de fecha y hora
+    df['Fecha'] = pd.to_datetime(df['Fecha']).dt.date
+    df['Hora'] = df['Hora'].astype(str).str[:5]
+    
+    # Agrupar por persona y fecha para sacar el primer y último registro (Ingreso y Salida)
     resumen = df.groupby(['Nombre', 'Fecha'])['Hora'].agg(['min', 'max']).reset_index()
     resumen.columns = ['NOMBRE / APELLIDO', 'Fecha', 'Ingreso', 'Salida']
+    
+    # Si solo marcó una vez en el día, dejar la salida en blanco
     resumen.loc[resumen['Ingreso'] == resumen['Salida'], 'Salida'] = ""
     
-    # Pivotar
+    # Pivotar los datos para el formato de la plantilla
     melted = resumen.melt(id_vars=['NOMBRE / APELLIDO', 'Fecha'], 
                           value_vars=['Ingreso', 'Salida'], 
                           var_name='Salida / Ingreso', value_name='Hora')
@@ -43,10 +48,13 @@ def procesar_datos(archivo):
     plantilla = melted.pivot(index=['NOMBRE / APELLIDO', 'Salida / Ingreso'], 
                              columns='Fecha', values='Hora').reset_index()
     
-    # Invertir orden Salida/Ingreso y Fechas Descendentes
+    # Invertir el orden (primero Salida, luego Ingreso) y ordenar fechas de más reciente a más antigua
     plantilla = plantilla.sort_values(by=['NOMBRE / APELLIDO', 'Salida / Ingreso'], ascending=[True, False])
+    
+    # Reordenar las columnas de fechas
     cols = list(plantilla.columns[:2]) + sorted(list(plantilla.columns[2:]), reverse=True)
     return plantilla[cols]
+    
 
 # --- LÓGICA DE ESTILOS ---
 def aplicar_estilos_excel(df_procesado):
