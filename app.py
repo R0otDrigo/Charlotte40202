@@ -10,21 +10,39 @@ def procesar_datos(archivo):
     # Leer el archivo sin cabeceras inicialmente
     df_raw = pd.read_excel(archivo, header=None)
     
-    # Buscar automáticamente en qué fila están los encabezados (donde la primera columna dice 'Nombre')
-    try:
+    # CASO 1: Formato general donde la primera columna es 'Nombre'
+    if (df_raw[0] == 'Nombre').any():
         header_idx = df_raw[df_raw[0] == 'Nombre'].index[0]
-    except IndexError:
-        raise ValueError("No se encontró la cabecera 'Nombre' en el archivo. Verifica el formato.")
-    
-    # Quedarnos solo con los datos a partir de esa fila
-    df = df_raw.iloc[header_idx + 1:].copy()
-    
-    # Asignar los nombres de las 4 columnas basándonos en tu archivo
-    # (Nombre, Fecha, Semana, Hora de registro de entrada)
-    # Si hay más columnas, las ignoramos tomando solo las primeras 4
-    df = df.iloc[:, :4]
-    df.columns = ['Nombre', 'Fecha', 'Semana', 'Hora']
-    
+        df = df_raw.iloc[header_idx + 1:].copy()
+        df = df.iloc[:, :4]
+        df.columns = ['Nombre', 'Fecha', 'Semana', 'Hora']
+
+    # CASO 2: Formato individual donde la tabla empieza con 'Fecha'
+    elif (df_raw[0] == 'Fecha').any():
+        header_idx = df_raw[df_raw[0] == 'Fecha'].index[0]
+        
+        # Buscar el nombre en las filas de arriba
+        nombre_completo = "Desconocido"
+        for i in range(header_idx - 1, -1, -1):
+            celda = str(df_raw.iloc[i, 0])
+            if 'Nombre:' in celda or 'Apellido:' in celda:
+                try:
+                    # Extraer "Fredy" y "Ccorahua" de la cadena
+                    nombre_part = celda.split('Nombre:')[1].split('Apellido:')[0].strip()
+                    apellido_part = celda.split('Apellido:')[1].split('ID:')[0].strip()
+                    nombre_completo = f"{nombre_part} {apellido_part}"
+                except IndexError:
+                    nombre_completo = celda # Respaldo por si el formato del texto varía
+                break
+                
+        df = df_raw.iloc[header_idx + 1:].copy()
+        df = df.iloc[:, :3] # Tomar Fecha, Semana, Hora
+        df.columns = ['Fecha', 'Semana', 'Hora']
+        df.insert(0, 'Nombre', nombre_completo) # Crear la columna Nombre al inicio
+        
+    else:
+        raise ValueError("No se reconoció el formato del archivo. Faltan las cabeceras 'Nombre' o 'Fecha'.")
+
     # Limpiar filas que estén vacías
     df = df.dropna(subset=['Nombre', 'Hora'])
     
@@ -48,13 +66,12 @@ def procesar_datos(archivo):
     plantilla = melted.pivot(index=['NOMBRE / APELLIDO', 'Salida / Ingreso'], 
                              columns='Fecha', values='Hora').reset_index()
     
-    # Invertir el orden (primero Salida, luego Ingreso) y ordenar fechas de más reciente a más antigua
+    # Invertir el orden (primero Salida, luego Ingreso) y ordenar fechas
     plantilla = plantilla.sort_values(by=['NOMBRE / APELLIDO', 'Salida / Ingreso'], ascending=[True, False])
     
     # Reordenar las columnas de fechas
     cols = list(plantilla.columns[:2]) + sorted(list(plantilla.columns[2:]), reverse=True)
     return plantilla[cols]
-    
 
 # --- LÓGICA DE ESTILOS ---
 def aplicar_estilos_excel(df_procesado):
