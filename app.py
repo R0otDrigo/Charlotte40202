@@ -10,44 +10,70 @@ def procesar_datos(archivo):
     # Leer el archivo sin cabeceras inicialmente
     df_raw = pd.read_excel(archivo, header=None)
     
+    # Detectar el formato
+    es_formato_1 = (df_raw[0] == 'Nombre').any()
+    es_formato_2 = (df_raw[0] == 'Fecha').any()
+    
     # CASO 1: Formato general donde la primera columna es 'Nombre'
-    if (df_raw[0] == 'Nombre').any():
+    if es_formato_1:
         header_idx = df_raw[df_raw[0] == 'Nombre'].index[0]
         df = df_raw.iloc[header_idx + 1:].copy()
         df = df.iloc[:, :4]
         df.columns = ['Nombre', 'Fecha', 'Semana', 'Hora']
-
-    # CASO 2: Formato individual donde la tabla empieza con 'Fecha'
-    elif (df_raw[0] == 'Fecha').any():
-        header_idx = df_raw[df_raw[0] == 'Fecha'].index[0]
         
-        # Buscar el nombre en las filas de arriba
-        nombre_completo = "Desconocido"
-        for i in range(header_idx - 1, -1, -1):
-            celda = str(df_raw.iloc[i, 0])
-            if 'Nombre:' in celda or 'Apellido:' in celda:
+    # CASO 2: Formato individual (Calcular por persona)
+    elif es_formato_2:
+        nombres = []
+        fechas = []
+        semanas = []
+        horas = []
+        current_name = "Desconocido"
+        
+        for idx, row in df_raw.iterrows():
+            val0 = str(row[0]).strip()
+            
+            # Extraer el nombre si la fila contiene 'Nombre:'
+            if 'Nombre:' in val0 or 'Apellido:' in val0:
                 try:
-                    # Extraer "Fredy" y "Ccorahua" de la cadena
-                    nombre_part = celda.split('Nombre:')[1].split('Apellido:')[0].strip()
-                    apellido_part = celda.split('Apellido:')[1].split('ID:')[0].strip()
-                    nombre_completo = f"{nombre_part} {apellido_part}"
+                    nombre_part = val0.split('Nombre:')[1].split('Apellido:')[0].strip()
+                    apellido_part = val0.split('Apellido:')[1].split('ID:')[0].strip()
+                    current_name = f"{nombre_part} {apellido_part}"
                 except IndexError:
-                    nombre_completo = celda # Respaldo por si el formato del texto varía
-                break
+                    current_name = val0 # Respaldo
+                continue
+            
+            # Ignorar filas de texto que no son datos
+            if val0 in ['Fecha', 'nan', ''] or 'Transacciones' in val0 or 'Hora de' in val0 or 'Operador:' in val0 or 'Periodo:' in val0:
+                continue
                 
-        df = df_raw.iloc[header_idx + 1:].copy()
-        df = df.iloc[:, :3] # Tomar Fecha, Semana, Hora
-        df.columns = ['Fecha', 'Semana', 'Hora']
-        df.insert(0, 'Nombre', nombre_completo) # Crear la columna Nombre al inicio
+            # Si tiene datos en la columna 0 (fecha) y la columna 2 (hora)
+            val2 = str(row[2]) if len(row) > 2 else ""
+            if pd.notna(row[0]) and val2 and val2 != 'nan' and val2 != 'None':
+                nombres.append(current_name)
+                fechas.append(row[0])
+                semanas.append(row[1])
+                horas.append(row[2])
+                
+        # Crear el dataframe limpio para el formato 2
+        df = pd.DataFrame({
+            'Nombre': nombres,
+            'Fecha': fechas,
+            'Semana': semanas,
+            'Hora': horas
+        })
         
     else:
         raise ValueError("No se reconoció el formato del archivo. Faltan las cabeceras 'Nombre' o 'Fecha'.")
 
-    # Limpiar filas que estén vacías
+    # --- LIMPIEZA Y TRANSFORMACIÓN COMÚN ---
+    
+    # Asegurarnos de que no haya quedado ninguna fila con la palabra 'Fecha' o 'Nombre'
+    df = df[(df['Fecha'] != 'Fecha') & (df['Nombre'] != 'Nombre')]
     df = df.dropna(subset=['Nombre', 'Hora'])
     
-    # Convertir formatos de fecha y hora
-    df['Fecha'] = pd.to_datetime(df['Fecha']).dt.date
+    # Convertir formatos de fecha y hora de forma segura
+    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.date
+    df = df.dropna(subset=['Fecha']) # Eliminar si alguna fecha no se pudo convertir
     df['Hora'] = df['Hora'].astype(str).str[:5]
     
     # Agrupar por persona y fecha para sacar el primer y último registro (Ingreso y Salida)
